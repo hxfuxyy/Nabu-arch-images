@@ -3,10 +3,10 @@ hl.config({
     input = {kb_layout = "us,ua", touchdevice = {enabled = true}},
     gestures = {workspace_swipe_touch = true, workspace_swipe_cancel_ratio = 0.15},
     decoration = {blur = {enabled = false}},
-    plugin = {hyprgrass = {sensitivity = 4.0, edge_margin = 24,
-        long_press_delay = 450, resize_on_border_long_press = true}},
 })
 if hl.plugin.hyprgrass then
+    hl.config({plugin = {hyprgrass = {sensitivity = 4.0, edge_margin = 24,
+        long_press_delay = 450, resize_on_border_long_press = true}}})
     local hg = hl.plugin.hyprgrass
     hg.gesture({pattern = {kind="swipe", fingers=3, direction="horizontal"}, action="workspace"})
     hg.bind({pattern = {kind="edge", origin="down", direction="up"},
