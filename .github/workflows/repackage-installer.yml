@@ -1,0 +1,33 @@
+name: Repackage installer with recovery compatibility fix
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+jobs:
+  repackage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - name: Download successful ARM64 image
+      uses: actions/download-artifact@v8
+      with:
+        name: arch-nabu-installer-hyprland
+        run-id: 41518594719
+        github-token: ${{ github.token }}
+        path: bundle
+    - name: Patch recovery preflight and validate all ZIP members
+      run: python3 hyprland/tools/patch-installer.py bundle/arch-nabu-installer-hyprland.zip META-INF/com/google/android/update-binary
+    - name: Upload fixed installer
+      uses: actions/upload-artifact@v7
+      with:
+        name: arch-nabu-installer-hyprland-fixed
+        path: 'bundle/arch-nabu-installer-hyprland.zip
+
+          bundle/arch-nabu-installer-hyprland.zip.sha256'
+        compression-level: 0
+        retention-days: 14
+        if-no-files-found: error

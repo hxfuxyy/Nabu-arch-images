@@ -69,7 +69,7 @@ if unzip -l "$ZIPFILE" | grep -q "images/rootfs.img"; then
   case "$image_bytes:$part_bytes" in
     *[!0-9:]*|:*|*:) abort "Cannot determine rootfs or linux partition size" ;;
   esac
-  [ "$part_bytes" -ge "$image_bytes" ] || abort "linux partition is smaller than rootfs image; nothing formatted"
+  awk -v partition_bytes="$part_bytes" -v image_bytes="$image_bytes" 'BEGIN {exit !((partition_bytes + 0) >= (image_bytes + 0))}' || abort "linux partition is smaller than rootfs image; nothing formatted"
   [ -e "$esp_part" ] || abort "ESP partition missing; nothing formatted"
 
   blockdev --setrw "$linux_part";
