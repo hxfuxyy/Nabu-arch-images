@@ -13,6 +13,8 @@ make -j2
 make test
 cd ../ski
 cargo build --release --locked -j2
+cd ../gammarelay
+cargo build --release --locked -j2
 cd ../wvkbd
 make -j2
 cd ../hyprgrass
@@ -21,6 +23,8 @@ meson compile -C build -j2
 BUILD
 cd /var/tmp/nabu-src
 make -C audio PREFIX=/usr/local install
+install -Dm755 gammarelay/target/release/wl-gammarelay-rs /usr/local/bin/wl-gammarelay-rs
+install -Dm644 gammarelay/LICENCE /usr/local/share/licenses/wl-gammarelay-rs/LICENSE
 (cd ski && sh packaging/stage.sh /)
 make -C wvkbd PREFIX=/usr/local install
 install -Dm755 hyprgrass/build/src/libhyprgrass.so /usr/local/lib/libhyprgrass.so

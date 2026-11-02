@@ -20,6 +20,10 @@
     "hyprgrass": {
       "repository": "horriblename/hyprgrass",
       "commit": "8ca1af717d5b4ea1215a781df52bcef02d7b15e6"
+    },
+    "gammarelay": {
+      "repository": "MaxVerevkin/wl-gammarelay-rs",
+      "commit": "9874e4a273a01f60e578a896183d67aa7a23572c"
     }
   }
 }
