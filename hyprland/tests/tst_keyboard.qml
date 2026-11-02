@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
+import "../src/quickshell/lock"
 Item {
     width: 1000; height: 340
     QtObject {

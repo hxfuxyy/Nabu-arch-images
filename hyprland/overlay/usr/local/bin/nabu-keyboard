@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
-set -euo pipefail
-if pgrep -u "$(id -u)" -x wvkbd-mobintl >/dev/null; then
-    pkill -RTMIN -u "$(id -u)" -x wvkbd-mobintl
-else
-    exec wvkbd-mobintl
-fi
+#!/usr/bin/env python3
+import os, subprocess
+os.environ.setdefault('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/run/user/%d/bus' % os.getuid())
+base = ['busctl', '--user']
+obj = ['sm.puri.OSK0', '/sm/puri/OSK0', 'sm.puri.OSK0']
+visible = subprocess.check_output(base + ['get-property'] + obj + ['Visible'], text=True).strip() == 'b true'
+subprocess.run(base + ['call'] + obj + ['SetVisible', 'b', 'false' if visible else 'true'], check=True)

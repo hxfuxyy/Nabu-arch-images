@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 import json,subprocess
+from pathlib import Path
 monitors=json.loads(subprocess.check_output(['hyprctl','-j','monitors']))
 m=next((m for m in monitors if m['name'].startswith(('DSI-', 'eDP-'))), monitors[0])
 t=(m.get('transform',0)+1)%4
 # JSON quoting is also valid for the monitor-name Lua string.
-code=('hl.monitor({output=%s,mode="preferred",position="auto",scale=1.6,transform=%d}); '
-      'hl.config({input={touchdevice={output=%s,transform=%d}}})') % (json.dumps(m['name']),t,json.dumps(m['name']),t)
+code=('hl.monitor({output=%s,mode="preferred",position="auto",scale=%s,transform=%d}); '
+      'hl.config({input={touchdevice={output=%s,transform=%d}}})') % (json.dumps(m['name']),m['scale'],t,json.dumps(m['name']),t)
 subprocess.run(['hyprctl','eval',code],check=True)
+
+p = Path.home()/'.config/hypr/config/rotation.lua'
+p.parent.mkdir(parents=True, exist_ok=True)
+p.with_suffix('.tmp').write_text(code + '\n')
+p.with_suffix('.tmp').replace(p)

@@ -379,6 +379,7 @@ jobs:
     - name: Install desktop packages
       run: |
         sudo cp -a ./repo/hyprland/overlay/. ./mountpoint/
+        sudo cp -a ./repo/hyprland/tablet ./mountpoint/usr/local/share/nabu/
         sudo chmod +x ./mountpoint/usr/local/bin/nabu-*
         sudo mkdir -p ./mountpoint/var/tmp/nabu-src
         sudo cp -a ./sources/. ./mountpoint/var/tmp/nabu-src/

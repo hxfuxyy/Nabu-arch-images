@@ -4,7 +4,7 @@ set -euo pipefail
 
 install_packages() {
 pacman -Syu --noconfirm
-pacman -S --needed --noconfirm kitty cava zbar tesseract tesseract-data-eng pavucontrol alsa-utils wl-clipboard fd qt6-multimedia qt6-5compat ripgrep cliphist jq socat inotify-tools pamixer brightnessctl ddcutil acpi iw bluez bluez-utils libnotify networkmanager lm_sensors bc matugen pipewire wireplumber pipewire-pulse pipewire-alsa libpulse python imagemagick wget file git psmisc ffmpeg fastfetch quickshell unzip python-websockets python-jeepney qt6-websockets grim playerctl satty xdg-desktop-portal-gtk slurp wmctrl power-profiles-daemon qt5-wayland qt5-quickcontrols qt5-quickcontrols2 qt5-graphicaleffects qt6-wayland qt5ct qt6ct adwaita-icon-theme gpu-screen-recorder wf-recorder adw-gtk-theme hyprland xdg-desktop-portal-hyprland polkit-gnome firefox upower qt6-virtualkeyboard sddm breeze base-devel rust cmake meson ninja glm cairo pango wayland wayland-protocols libxkbcommon pipewire-jack scdoc libcamera-tools camera-studio nabu-torch noto-fonts noto-fonts-emoji ttf-iosevka-nerd xdg-user-dirs
+pacman -S --needed --noconfirm kitty cava zbar tesseract tesseract-data-eng pavucontrol alsa-utils wl-clipboard fd qt6-multimedia qt6-5compat ripgrep cliphist jq socat inotify-tools pamixer brightnessctl ddcutil acpi iw bluez bluez-utils libnotify networkmanager lm_sensors bc matugen pipewire wireplumber pipewire-pulse pipewire-alsa libpulse python imagemagick wget file git psmisc ffmpeg fastfetch quickshell unzip python-websockets python-jeepney qt6-websockets grim playerctl satty xdg-desktop-portal-gtk slurp wmctrl power-profiles-daemon qt5-wayland qt5-quickcontrols qt5-quickcontrols2 qt5-graphicaleffects qt6-wayland qt5ct qt6ct adwaita-icon-theme gpu-screen-recorder wf-recorder adw-gtk-theme hyprland xdg-desktop-portal-hyprland polkit-gnome firefox upower qt6-virtualkeyboard qt6-declarative sddm breeze squeekboard base-devel rust cmake meson ninja glm cairo pango wayland wayland-protocols libxkbcommon pipewire-jack scdoc libcamera-tools camera-studio nabu-torch noto-fonts noto-fonts-emoji ttf-iosevka-nerd xdg-user-dirs
 # The plugin API is version specific. Refuse silently mismatched upgrades.
 [[ $(pacman -Q hyprland | cut -d' ' -f2) == 0.57.0-* ]]
 useradd -m builduser
@@ -77,6 +77,9 @@ for app in kitty cava fastfetch; do
 done
 mkdir -p "$cfg/serpantinum" /home/user/Pictures/Wallpapers
 jq '.bar.height=56 | .dock.elementSize=56 | .dock.smartAutohide=false | .general.language="ua" | del(.display.monitors) | .lockscreen.fingerprintEnabled=false' "$share/config/serpantinum/settings.json" > "$cfg/serpantinum/settings.json"
+python /usr/local/share/nabu/tablet/apply.py
+chown -R user:user /home/user
+runuser -u user -- dbus-run-session gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'ua'), ('xkb', 'ru'), ('xkb', 'us')]"
 # Pin the compositor until its plugin is rebuilt; kernel is pinned by the nabu base overlay.
 sed -i '/^IgnorePkg = /s/$/ hyprland/' /etc/pacman.conf
 systemctl enable sddm NetworkManager bluetooth
@@ -91,6 +94,13 @@ for executable in Hyprland quickshell wvkbd-mobintl ski serpantinum-audio; do
 done
 ldd /usr/local/lib/libhyprgrass.so | tee /etc/nabu-plugin-libs.txt
 ! grep -q 'not found' /etc/nabu-plugin-libs.txt
+# The module import catches missing qmldir registration in the deployed shell.
+mkdir -p "$share/tests"
+cp /usr/local/share/nabu/tablet/tst_keyboard.qml "$share/tests/"
+QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input "$share/tests" -o -,txt
+install -d -m700 -o user -g user /tmp/nabu-verify
+runuser -u user -- env HOME=/home/user XDG_RUNTIME_DIR=/tmp/nabu-verify Hyprland --verify-config
+rmdir /tmp/nabu-verify
 pacman -Q > /etc/nabu-packages.txt
 rm -rf /var/tmp/nabu-src /home/builduser
 userdel builduser

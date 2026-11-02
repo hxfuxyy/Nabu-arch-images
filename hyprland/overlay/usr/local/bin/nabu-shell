@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec systemd-cat --identifier=nabu-shell /usr/local/bin/serpantinumd start
