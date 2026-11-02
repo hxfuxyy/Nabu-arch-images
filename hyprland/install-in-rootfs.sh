@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $(uname -m) == aarch64 ]] || { echo "Native ARM64 required" >&2; exit 1; }
+
+install_packages() {
 pacman -Syu --noconfirm
-pacman -S --needed --noconfirm kitty cava zbar tesseract tesseract-data-eng pavucontrol alsa-utils wl-clipboard fd qt6-multimedia qt6-5compat ripgrep cliphist jq socat inotify-tools pamixer brightnessctl ddcutil acpi iw bluez bluez-utils libnotify networkmanager lm_sensors bc matugen pipewire wireplumber pipewire-pulse pipewire-alsa libpulse python imagemagick wget file git psmisc ffmpeg fastfetch quickshell unzip python-websockets python-jeepney qt6-websockets grim playerctl satty xdg-desktop-portal-gtk slurp wmctrl power-profiles-daemon qt5-wayland qt5-quickcontrols qt5-quickcontrols2 qt5-graphicaleffects qt6-wayland qt5ct qt6ct adwaita-icon-theme gpu-screen-recorder wf-recorder adw-gtk-theme hyprland xdg-desktop-portal-hyprland polkit-gnome firefox upower qt6-virtualkeyboard sddm breeze base-devel rust meson ninja glm cairo pango wayland wayland-protocols libxkbcommon pipewire-jack scdoc libcamera-tools camera-studio nabu-torch noto-fonts noto-fonts-emoji ttf-iosevka-nerd xdg-user-dirs
+pacman -S --needed --noconfirm kitty cava zbar tesseract tesseract-data-eng pavucontrol alsa-utils wl-clipboard fd qt6-multimedia qt6-5compat ripgrep cliphist jq socat inotify-tools pamixer brightnessctl ddcutil acpi iw bluez bluez-utils libnotify networkmanager lm_sensors bc matugen pipewire wireplumber pipewire-pulse pipewire-alsa libpulse python imagemagick wget file git psmisc ffmpeg fastfetch quickshell unzip python-websockets python-jeepney qt6-websockets grim playerctl satty xdg-desktop-portal-gtk slurp wmctrl power-profiles-daemon qt5-wayland qt5-quickcontrols qt5-quickcontrols2 qt5-graphicaleffects qt6-wayland qt5ct qt6ct adwaita-icon-theme gpu-screen-recorder wf-recorder adw-gtk-theme hyprland xdg-desktop-portal-hyprland polkit-gnome firefox upower qt6-virtualkeyboard sddm breeze base-devel rust cmake meson ninja glm cairo pango wayland wayland-protocols libxkbcommon pipewire-jack scdoc libcamera-tools camera-studio nabu-torch noto-fonts noto-fonts-emoji ttf-iosevka-nerd xdg-user-dirs
 # The plugin API is version specific. Refuse silently mismatched upgrades.
 [[ $(pacman -Q hyprland | cut -d' ' -f2) == 0.57.0-* ]]
 useradd -m builduser
 chown -R builduser:builduser /var/tmp/nabu-src
+}
+
+build_sources() {
 runuser -u builduser -- bash -euo pipefail <<'BUILD'
+cd /var/tmp/nabu-src/hyprgrass
+meson setup build --prefix=/usr/local
+meson compile -C build -j2
 cd /var/tmp/nabu-src/audio
 make -j2
 make test
@@ -17,10 +25,11 @@ cd ../gammarelay
 cargo build --release --locked -j2
 cd ../wvkbd
 make -j2
-cd ../hyprgrass
-meson setup build --prefix=/usr/local
-meson compile -C build -j2
+
 BUILD
+}
+
+deploy_desktop() {
 cd /var/tmp/nabu-src
 make -C audio PREFIX=/usr/local install
 install -Dm755 gammarelay/target/release/wl-gammarelay-rs /usr/local/bin/wl-gammarelay-rs
@@ -85,3 +94,12 @@ ldd /usr/local/lib/libhyprgrass.so | tee /etc/nabu-plugin-libs.txt
 pacman -Q > /etc/nabu-packages.txt
 rm -rf /var/tmp/nabu-src /home/builduser
 userdel builduser
+}
+
+case "${1:-all}" in
+ packages) install_packages ;;
+ build) build_sources ;;
+ deploy) deploy_desktop ;;
+ all) install_packages; build_sources; deploy_desktop ;;
+ *) echo "Expected packages, build, deploy or all" >&2; exit 2 ;;
+esac
