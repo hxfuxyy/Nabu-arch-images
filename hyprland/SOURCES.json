@@ -1,0 +1,25 @@
+{
+  "nabu_base": "c0e0f2d1e550b8c2868489cfbfa95dee2bb22dae",
+  "sources": {
+    "serpantinum": {
+      "repository": "ilyamiro/serpantinum",
+      "commit": "8e4fad180febb523588f63ca19ac049f37512272"
+    },
+    "audio": {
+      "repository": "ilyamiro/serpantinum-audio",
+      "commit": "0a12c8d407a201c80b4862a60331af38bd0889e9"
+    },
+    "ski": {
+      "repository": "ilyamiro/Ski",
+      "commit": "e6e2cdf49ab139bd39badff96c5c831b79148ed5"
+    },
+    "wvkbd": {
+      "repository": "jjsullivan5196/wvkbd",
+      "commit": "f7e9ea3a7565decd0d120861c1cb36a7b6836244"
+    },
+    "hyprgrass": {
+      "repository": "horriblename/hyprgrass",
+      "commit": "8ca1af717d5b4ea1215a781df52bcef02d7b15e6"
+    }
+  }
+}

@@ -1,681 +1,584 @@
-name: Build installers
-
-on:
-  workflow_dispatch:
-    inputs:
-      trigger_release:
-        description: "Also create a GitHub release after build"
-        type: boolean
-        default: false
-      kernel_version:
-        description: "Kernel version to install (e.g. 7.3.1-1); empty = latest in [nabu] repo"
-        type: string
-        default: "7.3.1-1"
-        required: false
-      nightly_kernel_url:
-        description: "URL to a ZIP containing kernel/headers (nightly.link); empty = use repo/version"
-        type: string
-        default: ""
-        required: false
-
+name: Build Nabu Hyprland touch image
 jobs:
   build-base-image:
     name: Build base image
     runs-on: ubuntu-24.04-arm
     steps:
-      - name: Update apt cache
-        run: sudo apt-get update
+    - name: Update apt cache
+      run: sudo apt-get update
+    - name: Install tools
+      run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools e2fsprogs pigz unzip
+    - name: Checkout repository
+      uses: actions/checkout@v7
+      with:
+        path: repo
+    - name: Create and mount image
+      run: 'echo "::group::Create image"
 
-      - name: Install tools
-        run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools e2fsprogs pigz unzip
+        truncate -s 20G ./rootfs.img
 
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          path: repo
+        mkfs.ext4 ./rootfs.img
 
-      - name: Create and mount image
-        run: |
-          echo "::group::Create image"
-          truncate -s 20G ./rootfs.img
-          mkfs.ext4 ./rootfs.img
-          echo "::endgroup::"
-          echo "::group::Mount image"
-          mkdir mountpoint
-          sudo mount -o loop ./rootfs.img ./mountpoint/
-          sudo mkdir ./mountpoint/boot/efi/ -p
-          sudo mount -o size=512M,mode=0755 -t tmpfs none ./mountpoint/boot/efi/
-          echo "::endgroup::"
+        echo "::endgroup::"
 
-      - name: Download generic rootfs tarball
-        run: |
-          if ! wget --timeout=30 --tries=2 --waitretry=5 "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz; then
-            echo "Primary mirror failed, falling back to GitHub release"
-            wget --timeout=30 --tries=2 "https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/ArchLinuxARM-aarch64-latest.tar.gz" -qO ArchLinuxARM-aarch64-latest.tar.gz
-          fi
+        echo "::group::Mount image"
 
-      - name: Build rootfs-extractor image
-        run: |
-          echo '
-          FROM alpine:latest
-          RUN apk add --no-cache libarchive-tools
-          ENTRYPOINT ["/bin/sh"]
-          ' > Dockerfile
-          docker build -t rootfs-extractor .
+        mkdir mountpoint
 
-      - name: Extract rootfs
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}/ArchLinuxARM-aarch64-latest.tar.gz:/rootfs.tar \
-            -v ${{ github.workspace }}/mountpoint:/mountpoint \
-            rootfs-extractor -c "
-              cd /mountpoint && bsdtar -xpf /rootfs.tar
-            "
+        sudo mount -o loop ./rootfs.img ./mountpoint/
 
-      - name: Init pacman key store
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman-key --init
-          pacman-key --populate archlinuxarm
-          EOF
+        sudo mkdir ./mountpoint/boot/efi/ -p
 
-      - name: Configure pacman mirrorlist
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          cat > /etc/pacman.d/mirrorlist <<'EOM'
-          Server = http://ca.us.mirror.archlinuxarm.org/$arch/$repo
-          Server = http://nj.us.mirror.archlinuxarm.org/$arch/$repo
-          EOM
-          EOF
+        sudo mount -o size=512M,mode=0755 -t tmpfs none ./mountpoint/boot/efi/
 
-      - name: Delete default user
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          userdel alarm
-          EOF
+        echo "::endgroup::"
 
-      - name: Set locale
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          sed -i "s|#en_US.UTF-8 UTF-8|en_US.UTF-8 UTF-8|g" "/etc/locale.gen"
-          locale-gen
-          echo "LANG=en_US.UTF-8" > "/etc/locale.conf"
-          EOF
+        '
+    - name: Download generic rootfs tarball
+      run: "if ! wget --timeout=30 --tries=2 --waitretry=5 \"https://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz\" -qO ArchLinuxARM-aarch64-latest.tar.gz; then\n  echo \"Primary mirror failed, falling back to GitHub release\"\n  wget --timeout=30 --tries=2 \"https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo/ArchLinuxARM-aarch64-latest.tar.gz\" -qO ArchLinuxARM-aarch64-latest.tar.gz\nfi\n"
+    - name: Build rootfs-extractor image
+      run: 'echo ''
 
-      - name: Configure pacman options
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          sed -i "s/#ParallelDownloads/ParallelDownloads/g" /etc/pacman.conf
-          sed -i "s/#DisableSandboxFilesystem/DisableSandboxFilesystem/g" /etc/pacman.conf
-          sed -i "s/#DisableSandboxSyscalls/DisableSandboxSyscalls/g" /etc/pacman.conf
-          EOF
+        FROM alpine:latest
 
-      - name: Add nabu repo
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          sed -i '/^\[core\]/i \[nabu]\nSigLevel = Never\nServer = https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo\n' /etc/pacman.conf
-          n=0
-          until pacman -Sy --noconfirm; do
-            n=$((n+1))
-            if [ $n -ge 3 ]; then
-              echo "pacman -Sy failed after 3 attempts" >&2
-              exit 1
-            fi
-            sleep 5
-          done
-          EOF
+        RUN apk add --no-cache libarchive-tools
 
-      - name: Remove generic kernel
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman -R --noconfirm linux-aarch64
-          EOF
+        ENTRYPOINT ["/bin/sh"]
 
-      - name: Update system
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          n=0
-          until pacman -Syu --noconfirm; do
-            n=$((n+1))
-            if [ $n -ge 3 ]; then
-              echo "pacman -Syu failed after 3 attempts" >&2
-              exit 1
-            fi
-            sleep 5
-          done
-          EOF
+        '' > Dockerfile
 
-      - name: Install firmwares
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          n=0
-          until pacman -S --noconfirm linux-firmware-xiaomi-nabu; do
-            n=$((n+1))
-            if [ $n -ge 3 ]; then exit 1; fi
-            sleep 5
-          done
-          EOF
+        docker build -t rootfs-extractor .
 
-      - name: Install ukify
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman -S --noconfirm ukify
-          EOF
+        '
+    - name: Extract rootfs
+      run: "docker run --rm \\\n  -v ${{ github.workspace }}/ArchLinuxARM-aarch64-latest.tar.gz:/rootfs.tar \\\n  -v ${{ github.workspace }}/mountpoint:/mountpoint \\\n  rootfs-extractor -c \"\n    cd /mountpoint && bsdtar -xpf /rootfs.tar\n  \"\n"
+    - name: Init pacman key store
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
 
-      - name: Install kernel and headers
-        run: |
-          if [ -n "${{ inputs.nightly_kernel_url }}" ]; then
-            echo "Downloading nightly kernel from ${{ inputs.nightly_kernel_url }}"
-            curl -fL --retry 3 -o kernel-nightly.zip "${{ inputs.nightly_kernel_url }}"
-            rm -rf kernel-nightly
-            unzip -o kernel-nightly.zip -d kernel-nightly
-            sudo mkdir -p ./mountpoint/root/kernel-nightly
-            sudo cp kernel-nightly/*.pkg.tar.* ./mountpoint/root/kernel-nightly/
-            sudo arch-chroot ./mountpoint bash -c "pacman -U --noconfirm /root/kernel-nightly/*.pkg.tar.*"
-          elif [ -z "${{ inputs.kernel_version }}" ]; then
-            sudo arch-chroot ./mountpoint bash -c "pacman -S --noconfirm linux-nabu linux-nabu-headers"
-          else
-            sudo arch-chroot ./mountpoint bash -c "
-              set -e
-              BASE=https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo
-              for pkg in linux-nabu linux-nabu-headers; do
-                url=\$BASE/\${pkg}-${{ inputs.kernel_version }}-aarch64.pkg.tar.xz
-                echo \"Downloading \$url\"
-                curl -fL --retry 3 -o /tmp/\${pkg}.pkg.tar.xz \"\$url\"
-              done
-              pacman -U --noconfirm /tmp/linux-nabu.pkg.tar.xz /tmp/linux-nabu-headers.pkg.tar.xz
-            "
-          fi
+        set -e
 
+        pacman-key --init
 
-      - name: Install alsa ucm config
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          n=0
-          until pacman -S --noconfirm alsa-ucm-conf-xiaomi-nabu; do
-            n=$((n+1))
-            if [ $n -ge 3 ]; then exit 1; fi
-            sleep 5
-          done
-          EOF
+        pacman-key --populate archlinuxarm
 
-      - name: Install qualcomm firmware and services
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman -S --noconfirm qrtr tqftpserv rmtfs hexagonrpcd
-          systemctl enable qrtr-ns || true
-          systemctl enable tqftpserv rmtfs
-          systemctl enable hexagonrpcd || true
-          EOF
+        EOF
 
-      - name: Install displaylink (evdi, works out of the box)
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman -S --noconfirm dkms evdi-dkms displaylink gcc make
-          systemctl enable displaylink
-          EOF
+        '
+    - name: Configure pacman mirrorlist
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
 
-      - name: Disable sshd
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          systemctl disable sshd
-          EOF
+        set -e
 
-      - name: Install and configure sudo
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman -S --noconfirm sudo
-          echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/10-wheel
-          EOF
+        cat > /etc/pacman.d/mirrorlist <<''EOM''
 
-      - name: Install console font
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman -S --noconfirm terminus-font
-          EOF
+        Server = https://ca.us.mirror.archlinuxarm.org/$arch/$repo
 
-      - name: Apply base overlay
-        run: |
-          sudo cp ./repo/base/overlay/* -r ./mountpoint/
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          /overlay-post-apply
-          rm /overlay-post-apply
-          EOF
+        Server = https://nj.us.mirror.archlinuxarm.org/$arch/$repo
 
-      - name: Install nabu wlan service and tools
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman -S --noconfirm nabu-pmac nabu-kclean
-          systemctl enable nabu-pmac
-          EOF
+        EOM
 
-      - name: Enable zram-generator
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman -S --noconfirm zram-generator
-          systemctl enable systemd-zram-setup@zram0.service
-          EOF
+        EOF
 
-      - name: Create efi
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          cp /opt/nabu/efi-template/* -rv /boot/efi/
-          mkdir /boot/efi/EFI/arch/
-          rm /opt/nabu/efi-template -r
-          EOF
+        '
+    - name: Delete default user
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
 
-      - name: Configure mkinitcpio
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          sed -i -e "s/ autodetect//g" -e "s/ microcode//g" /etc/mkinitcpio.conf
-          sed -i 's|^FILES=.*|FILES=(/etc/shadow /etc/passwd)|' /etc/mkinitcpio.conf
-          EOF
+        set -e
 
-      - name: Generate UKI
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          set -e
-          mkinitcpio -P
-          if [ ! -f /boot/efi/EFI/arch/arch-linux-nabu.efi ]; then
-            echo "ERROR: UKI /boot/efi/EFI/arch/arch-linux-nabu.efi was not generated" >&2
-            exit 1
-          fi
-          ls -l /boot/efi/EFI/arch/
-          EOF
+        userdel alarm
 
-      - name: Pack efi
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          tar cvzf "/opt/nabu/efi.tgz" -C "/boot/efi/" .
-          EOF
+        EOF
 
-      - name: Install base packages
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          pacman -S --noconfirm networkmanager bluez bluez-utils vulkan-freedreno iio-sensor-proxy psmisc dosfstools i2c-tools ntfs-3g iris-vaapi
-          systemctl enable iio-sensor-proxy || true
-          EOF
+        '
+    - name: Set locale
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
 
-      - name: Enable bluetooth and network manager
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          systemctl enable bluetooth NetworkManager
-          EOF
+        set -e
 
-      - name: Create user with password
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          groupadd -f -r i2c
-          useradd -m -G wheel,audio,video,storage,optical,i2c,input -s /bin/bash user
-          echo "user:123456" | chpasswd
-          EOF
+        sed -i "s|#en_US.UTF-8 UTF-8|en_US.UTF-8 UTF-8|g" "/etc/locale.gen"
 
-      - name: Clear pacman cache
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          yes | pacman -Scc
-          EOF
+        locale-gen
 
-      - name: Unmount rootfs image
-        run: |
-          sudo umount -R ./mountpoint
-          rmdir ./mountpoint
+        echo "LANG=en_US.UTF-8" > "/etc/locale.conf"
 
-      - name: Compress rootfs image
-        run: |
-          e2fsck -f rootfs.img -y
-          resize2fs rootfs.img -M
-          pigz -9 rootfs.img
+        EOF
 
-      - name: Upload rootfs artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: arch-nabu-rootfs-base
-          path: ./rootfs.img.gz
-          retention-days: 90
-          compression-level: 0
+        '
+    - name: Configure pacman options
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
 
-  build-gnome-image:
-    name: Build GNOME image
+        set -e
+
+        sed -i "s/#ParallelDownloads/ParallelDownloads/g" /etc/pacman.conf
+
+        sed -i "s/#DisableSandboxFilesystem/DisableSandboxFilesystem/g" /etc/pacman.conf
+
+        sed -i "s/#DisableSandboxSyscalls/DisableSandboxSyscalls/g" /etc/pacman.conf
+
+        EOF
+
+        '
+    - name: Add nabu repo
+      run: "sudo arch-chroot ./mountpoint bash - <<'EOF'\nset -e\nsed -i '/^\\[core\\]/i \\[nabu]\\nSigLevel = Never\\nServer = https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo\\n' /etc/pacman.conf\nn=0\nuntil pacman -Sy --noconfirm; do\n  n=$((n+1))\n  if [ $n -ge 3 ]; then\n    echo \"pacman -Sy failed after 3 attempts\" >&2\n    exit 1\n  fi\n  sleep 5\ndone\nEOF\n"
+    - name: Remove generic kernel
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -R --noconfirm linux-aarch64
+
+        EOF
+
+        '
+    - name: Update system
+      run: "sudo arch-chroot ./mountpoint bash - <<'EOF'\nset -e\nn=0\nuntil pacman -Syu --noconfirm; do\n  n=$((n+1))\n  if [ $n -ge 3 ]; then\n    echo \"pacman -Syu failed after 3 attempts\" >&2\n    exit 1\n  fi\n  sleep 5\ndone\nEOF\n"
+    - name: Install firmwares
+      run: "sudo arch-chroot ./mountpoint bash - <<'EOF'\nset -e\nn=0\nuntil pacman -S --noconfirm linux-firmware-xiaomi-nabu; do\n  n=$((n+1))\n  if [ $n -ge 3 ]; then exit 1; fi\n  sleep 5\ndone\nEOF\n"
+    - name: Install ukify
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -S --noconfirm ukify
+
+        EOF
+
+        '
+    - name: Install kernel and headers
+      run: "sudo arch-chroot ./mountpoint bash -e <<'EOF'\nbase=https://github.com/Kumar-Jy/nabu-pkgs/releases/download/repo\nfor pkg in linux-nabu linux-nabu-headers; do\n  curl -fL --retry 3 \"$base/${pkg}-7.3.1-1-aarch64.pkg.tar.xz\" -o \"/tmp/${pkg}.pkg.tar.xz\"\ndone\npacman -U --noconfirm /tmp/linux-nabu.pkg.tar.xz /tmp/linux-nabu-headers.pkg.tar.xz\nEOF\n"
+    - name: Install alsa ucm config
+      run: "sudo arch-chroot ./mountpoint bash - <<'EOF'\nset -e\nn=0\nuntil pacman -S --noconfirm alsa-ucm-conf-xiaomi-nabu; do\n  n=$((n+1))\n  if [ $n -ge 3 ]; then exit 1; fi\n  sleep 5\ndone\nEOF\n"
+    - name: Install qualcomm firmware and services
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -S --noconfirm qrtr tqftpserv rmtfs hexagonrpcd
+
+        systemctl enable qrtr-ns || true
+
+        systemctl enable tqftpserv rmtfs
+
+        systemctl enable hexagonrpcd || true
+
+        EOF
+
+        '
+    - name: Install displaylink (evdi, works out of the box)
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -S --noconfirm dkms evdi-dkms displaylink gcc make
+
+        systemctl enable displaylink
+
+        EOF
+
+        '
+    - name: Disable sshd
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        systemctl disable sshd
+
+        EOF
+
+        '
+    - name: Install and configure sudo
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -S --noconfirm sudo
+
+        echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/10-wheel
+
+        EOF
+
+        '
+    - name: Install console font
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -S --noconfirm terminus-font
+
+        EOF
+
+        '
+    - name: Apply base overlay
+      run: 'sudo cp ./repo/base/overlay/* -r ./mountpoint/
+
+        sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        /overlay-post-apply
+
+        rm /overlay-post-apply
+
+        EOF
+
+        '
+    - name: Install nabu wlan service and tools
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -S --noconfirm nabu-pmac nabu-kclean
+
+        systemctl enable nabu-pmac
+
+        EOF
+
+        '
+    - name: Enable zram-generator
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -S --noconfirm zram-generator
+
+        systemctl enable systemd-zram-setup@zram0.service
+
+        EOF
+
+        '
+    - name: Create efi
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        cp /opt/nabu/efi-template/* -rv /boot/efi/
+
+        mkdir /boot/efi/EFI/arch/
+
+        rm /opt/nabu/efi-template -r
+
+        EOF
+
+        '
+    - name: Configure mkinitcpio
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        sed -i -e "s/ autodetect//g" -e "s/ microcode//g" /etc/mkinitcpio.conf
+
+        sed -i ''s|^FILES=.*|FILES=(/etc/shadow /etc/passwd)|'' /etc/mkinitcpio.conf
+
+        EOF
+
+        '
+    - name: Generate UKI
+      run: "sudo arch-chroot ./mountpoint bash - <<'EOF'\nset -e\nset -e\nmkinitcpio -P\nif [ ! -f /boot/efi/EFI/arch/arch-linux-nabu.efi ]; then\n  echo \"ERROR: UKI /boot/efi/EFI/arch/arch-linux-nabu.efi was not generated\" >&2\n  exit 1\nfi\nls -l /boot/efi/EFI/arch/\nEOF\n"
+    - name: Pack efi
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        tar cvzf "/opt/nabu/efi.tgz" -C "/boot/efi/" .
+
+        EOF
+
+        '
+    - name: Install base packages
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -S --noconfirm networkmanager bluez bluez-utils vulkan-freedreno iio-sensor-proxy psmisc dosfstools i2c-tools ntfs-3g iris-vaapi
+
+        systemctl enable iio-sensor-proxy || true
+
+        EOF
+
+        '
+    - name: Enable bluetooth and network manager
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        systemctl enable bluetooth NetworkManager
+
+        EOF
+
+        '
+    - name: Create user with password
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        groupadd -f -r i2c
+
+        useradd -m -G wheel,audio,video,storage,optical,i2c,input -s /bin/bash user
+
+        echo "user:123456" | chpasswd
+
+        EOF
+
+        '
+    - name: Clear pacman cache
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
+
+        set -e
+
+        pacman -Scc --noconfirm
+
+        EOF
+
+        '
+    - name: Unmount rootfs image
+      run: 'sudo umount -R ./mountpoint
+
+        rmdir ./mountpoint
+
+        '
+    - name: Compress rootfs image
+      run: 'e2fsck -f rootfs.img -y
+
+        resize2fs rootfs.img -M
+
+        pigz -9 rootfs.img
+
+        '
+    - name: Upload rootfs artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: arch-nabu-rootfs-base
+        path: ./rootfs.img.gz
+        retention-days: 90
+        compression-level: 0
+    timeout-minutes: 180
+  build-hyprland-image:
+    name: Build Hyprland + Serpantinum + touchscreen gestures
     runs-on: ubuntu-24.04-arm
     needs: build-base-image
     permissions:
       actions: read
     steps:
-      - name: Update apt cache
-        run: sudo apt-get update
+    - name: Update apt cache
+      run: sudo apt-get update
+    - name: Install tools
+      run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools e2fsprogs pigz dosfstools zip
+    - name: Checkout repository
+      uses: actions/checkout@v7
+      with:
+        path: repo
+    - name: Download base image
+      uses: actions/download-artifact@v8
+      with:
+        name: arch-nabu-rootfs-base
+    - name: Unpack and mount base image
+      run: 'echo "::group::Unpack image"
 
-      - name: Install tools
-        run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools e2fsprogs pigz dosfstools zip
+        pigz -d rootfs.img.gz
 
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          path: repo
+        echo "::endgroup::"
 
-      - name: Download base image
-        uses: actions/download-artifact@v8
-        with:
-          name: arch-nabu-rootfs-base
+        echo "::group::Expand image"
 
-      - name: Unpack and mount base image
-        run: |
-          echo "::group::Unpack image"
-          pigz -d rootfs.img.gz
-          echo "::endgroup::"
-          echo "::group::Expand image"
-          e2fsck -f rootfs.img -y
-          resize2fs rootfs.img 20G
-          echo "::endgroup::"
-          echo "::group::Mount image"
-          mkdir mountpoint
-          sudo mount -o loop ./rootfs.img ./mountpoint/
-          sudo mkdir ./mountpoint/boot/efi/ -p
-          sudo mount -o size=512M,mode=0755 -t tmpfs none ./mountpoint/boot/efi/
-          echo "::endgroup::"
+        e2fsck -f rootfs.img -y
 
-      - name: Unpack efi
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          /opt/nabu/postinstall extract-efi
-          EOF
+        resize2fs rootfs.img 20G
 
-      - name: Install GNOME Desktop
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          set -e
-          n=0
-          until pacman -Syu --noconfirm; do
-            n=$((n+1))
-            if [ $n -ge 3 ]; then
-              echo "pacman -Syu failed after 3 attempts" >&2
-              exit 1
-            fi
-            sleep 5
-          done
-          # evolution-data-server provides libecal/libedataserver, which
-          # gnome-shell-calendar-server links against but gnome-shell does not
-          # pull in as a hard dependency (it crashed on missing sonames).
-          pacman -S --noconfirm upower gdm gnome-menus gnome-backgrounds gnome-control-center gnome-keyring nautilus xdg-desktop-portal-gnome gnome-console pipewire pipewire-pulse pipewire-jack wireplumber pipewire-libcamera gst-plugin-pipewire gst-plugin-libcamera gst-plugins-good libcamera-tools noto-fonts flatpak gnome-software loupe gnome-text-editor evolution-data-server
-          pacman -S --noconfirm nabu-tablet-mode camera-studio system-monitor nabu-torch
-          EOF
+        echo "::endgroup::"
 
-      - name: Apply DE overlay
-        run: |
-          sudo cp ./repo/gnome/overlay/* -r ./mountpoint/
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          /overlay-post-apply
-          rm /overlay-post-apply
-          EOF
+        echo "::group::Mount image"
 
-      - name: Enable gdm and configure auto-login
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          systemctl enable gdm
-          systemctl enable nabu-tablet-mode || true
-          mkdir -p /etc/gdm
-          cat > /etc/gdm/custom.conf << 'EOL'
-          [daemon]
-          AutomaticLoginEnable=True
-          AutomaticLogin=user
-          EOL
-          EOF
+        mkdir mountpoint
 
-      - name: Pack efi
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          rm -f /opt/nabu/efi.tgz
-          tar cvzf "/opt/nabu/efi.tgz" -C "/boot/efi/" .
-          EOF
+        sudo mount -o loop ./rootfs.img ./mountpoint/
 
-      - name: Clear pacman cache
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          yes | pacman -Scc
-          EOF
+        sudo mkdir ./mountpoint/boot/efi/ -p
 
-      - name: Export efi directory for artifact
-        run: |
-          mkdir -p ./efi
-          sudo cp -a ./mountpoint/boot/efi/EFI/. ./efi/
-          sudo chown -R $USER:$USER ./efi/
+        sudo mount -o size=512M,mode=0755 -t tmpfs none ./mountpoint/boot/efi/
 
-      - name: Unmount rootfs image
-        run: |
-          sudo umount -R ./mountpoint
-          rmdir ./mountpoint
+        echo "::endgroup::"
 
-      - name: Prepare artifact directories
-        run: |
-          e2fsck -f rootfs.img -y
-          resize2fs rootfs.img -M
-          mkdir -p ./images
-          mv ./rootfs.img ./images/
-          mv ./repo/bin ./bin
-          mv ./repo/DBKP ./DBKP
-          mv ./repo/META-INF ./META-INF
-          mv ./repo/installer ./installer
+        '
+    - name: Unpack efi
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
 
-      - name: Download WinPE image
-        run: |
-          wget "https://github.com/WOAFlasher/WinInstaller/releases/download/WinPE/WinPE23H2.img" -qO ./installer/pe.img
+        set -e
 
-      - name: Create ESP image
-        run: |
-          truncate -s 270M ./images/esp.img
-          mkfs.fat -F 32 -S 4096 -s 1 -n ESPNABU ./images/esp.img
-          mkdir -p ./esp-mount
-          sudo mount -o loop ./images/esp.img ./esp-mount/
-          sudo mkdir -p ./esp-mount/EFI
-          sudo cp -r ./efi/* ./esp-mount/EFI/
-          sudo umount ./esp-mount
-          rmdir ./esp-mount
+        /opt/nabu/postinstall extract-efi
 
-      - name: Copy flash scripts
-        run: |
-          cp ./repo/base/overlay/opt/nabu/fastboot-script/flash-linux.bat .
-          cp ./repo/base/overlay/opt/nabu/fastboot-script/flash-linux.sh .
-          chmod +x flash-linux.sh
+        EOF
 
-      - name: Upload rEFInd artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: nabu-arch-rEFInd
-          path: |
-            bin
-            DBKP
-            efi
-            installer
-            META-INF
-          retention-days: 90
-          compression-level: 5
+        '
+    - name: Checkout pinned serpantinum
+      uses: actions/checkout@v7
+      with:
+        repository: ilyamiro/serpantinum
+        ref: 8e4fad180febb523588f63ca19ac049f37512272
+        path: sources/serpantinum
+        persist-credentials: false
+    - name: Checkout pinned audio
+      uses: actions/checkout@v7
+      with:
+        repository: ilyamiro/serpantinum-audio
+        ref: 0a12c8d407a201c80b4862a60331af38bd0889e9
+        path: sources/audio
+        persist-credentials: false
+    - name: Checkout pinned ski
+      uses: actions/checkout@v7
+      with:
+        repository: ilyamiro/Ski
+        ref: e6e2cdf49ab139bd39badff96c5c831b79148ed5
+        path: sources/ski
+        persist-credentials: false
+    - name: Checkout pinned wvkbd
+      uses: actions/checkout@v7
+      with:
+        repository: jjsullivan5196/wvkbd
+        ref: f7e9ea3a7565decd0d120861c1cb36a7b6836244
+        path: sources/wvkbd
+        persist-credentials: false
+    - name: Checkout pinned hyprgrass
+      uses: actions/checkout@v7
+      with:
+        repository: horriblename/hyprgrass
+        ref: 8ca1af717d5b4ea1215a781df52bcef02d7b15e6
+        path: sources/hyprgrass
+        persist-credentials: false
+        submodules: recursive
+    - name: Install ARM64 desktop and gestures
+      run: 'sudo cp -a ./repo/hyprland/overlay/. ./mountpoint/
 
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: arch-nabu-installer-gnome
-          path: |
-            bin
-            DBKP
-            efi
-            flash-linux.bat
-            flash-linux.sh
-            images
-            installer
-            META-INF
-          retention-days: 90
-          compression-level: 5
+        sudo chmod +x ./mountpoint/usr/local/bin/nabu-*
 
-  build-plasma-image:
-    name: Build Plasma image
-    runs-on: ubuntu-24.04-arm
-    needs: build-base-image
-    permissions:
-      actions: read
-    steps:
-      - name: Update apt cache
-        run: sudo apt-get update
+        sudo mkdir -p ./mountpoint/var/tmp/nabu-src
 
-      - name: Install tools
-        run: sudo apt-get install -y git arch-install-scripts wget libarchive-tools e2fsprogs pigz dosfstools zip
+        sudo cp -a ./sources/. ./mountpoint/var/tmp/nabu-src/
 
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          path: repo
+        sudo cp ./repo/hyprland/install-in-rootfs.sh ./mountpoint/root/
 
-      - name: Download base image
-        uses: actions/download-artifact@v8
-        with:
-          name: arch-nabu-rootfs-base
+        sudo arch-chroot ./mountpoint bash /root/install-in-rootfs.sh
 
-      - name: Unpack and mount base image
-        run: |
-          echo "::group::Unpack image"
-          pigz -d rootfs.img.gz
-          echo "::endgroup::"
-          echo "::group::Expand image"
-          e2fsck -f rootfs.img -y
-          resize2fs rootfs.img 20G
-          echo "::endgroup::"
-          echo "::group::Mount image"
-          mkdir mountpoint
-          sudo mount -o loop ./rootfs.img ./mountpoint/
-          sudo mkdir ./mountpoint/boot/efi/ -p
-          sudo mount -o size=512M,mode=0755 -t tmpfs none ./mountpoint/boot/efi/
-          echo "::endgroup::"
+        sudo rm ./mountpoint/root/install-in-rootfs.sh
 
-      - name: Unpack efi
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          /opt/nabu/postinstall extract-efi
-          EOF
+        '
+    - name: Pack efi
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
 
-      - name: Install Plasma Desktop
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          set -e
-          n=0
-          until pacman -Syu --noconfirm; do
-            n=$((n+1))
-            if [ $n -ge 3 ]; then
-              echo "pacman -Syu failed after 3 attempts" >&2
-              exit 1
-            fi
-            sleep 5
-          done
-          pacman -S --noconfirm upower bluedevil breeze breeze-gtk discover drkonqi kde-gtk-config kdecoration kdeplasma-addons kinfocenter kscreen kwallet-pam plasma-browser-integration plasma-desktop plasma-nm plasma-pa plasma-systemmonitor plasma-vault plasma-workspace powerdevil print-manager qqc2-breeze-style sddm-kcm spectacle systemsettings xdg-desktop-portal-kde pipewire pipewire-pulse pipewire-jack wireplumber pipewire-libcamera gst-plugin-pipewire gst-plugin-libcamera gst-plugins-good libcamera-tools noto-fonts plasma-keyboard gwenview konsole dolphin ark kate qt6-multimedia-ffmpeg flatpak sddm-nabu nabu-tablet-mode nabu-autobrightness camera-studio system-monitor nabu-torch stylus-popup plasma-keyboard-full-layout
-          systemctl --global enable nabu-autobrightness.service
-          systemctl --global enable stylus-popup.service || true
-          EOF
+        set -e
 
-      - name: Apply DE overlay
-        run: |
-          sudo cp ./repo/plasma/overlay/* -r ./mountpoint/
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          /overlay-post-apply
-          rm /overlay-post-apply
-          EOF
+        rm -f /opt/nabu/efi.tgz
 
-      - name: Enable sddm and configure auto-login
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          set -e
-          systemctl enable sddm
-          systemctl enable nabu-tablet-mode
-          cat > /etc/sddm.conf.d/autologin.conf << 'EOL'
-          [Autologin]
-          User=user
-          Session=plasma.desktop
-          EOL
-          EOF
+        tar cvzf "/opt/nabu/efi.tgz" -C "/boot/efi/" .
 
-      - name: Pack efi
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          rm -f /opt/nabu/efi.tgz
-          tar cvzf "/opt/nabu/efi.tgz" -C "/boot/efi/" .
-          EOF
+        EOF
 
-      - name: Clear pacman cache
-        run: |
-          sudo arch-chroot ./mountpoint bash - <<'EOF'
-          yes | pacman -Scc
-          EOF
+        '
+    - name: Clear pacman cache
+      run: 'sudo arch-chroot ./mountpoint bash - <<''EOF''
 
-      - name: Export efi directory for artifact
-        run: |
-          mkdir -p ./efi
-          sudo cp -a ./mountpoint/boot/efi/EFI/. ./efi/
-          sudo chown -R $USER:$USER ./efi/
+        set -e
 
-      - name: Unmount rootfs image
-        run: |
-          sudo umount -R ./mountpoint
-          rmdir ./mountpoint
+        pacman -Scc --noconfirm
 
-      - name: Prepare artifact directories
-        run: |
-          e2fsck -f rootfs.img -y
-          resize2fs rootfs.img -M
-          mkdir -p ./images
-          mv ./rootfs.img ./images/
-          mv ./repo/bin ./bin
-          mv ./repo/DBKP ./DBKP
-          mv ./repo/META-INF ./META-INF
-          mv ./repo/installer ./installer
+        EOF
 
-      - name: Download WinPE image
-        run: |
-          wget "https://github.com/WOAFlasher/WinInstaller/releases/download/WinPE/WinPE23H2.img" -qO ./installer/pe.img
+        '
+    - name: Export efi directory for artifact
+      run: 'mkdir -p ./efi
 
-      - name: Create ESP image
-        run: |
-          truncate -s 270M ./images/esp.img
-          mkfs.fat -F 32 -S 4096 -s 1 -n ESPNABU ./images/esp.img
-          mkdir -p ./esp-mount
-          sudo mount -o loop ./images/esp.img ./esp-mount/
-          sudo mkdir -p ./esp-mount/EFI
-          sudo cp -r ./efi/* ./esp-mount/EFI/
-          sudo umount ./esp-mount
-          rmdir ./esp-mount
+        sudo cp -a ./mountpoint/boot/efi/EFI/. ./efi/
 
-      - name: Copy flash scripts
-        run: |
-          cp ./repo/base/overlay/opt/nabu/fastboot-script/flash-linux.bat .
-          cp ./repo/base/overlay/opt/nabu/fastboot-script/flash-linux.sh .
-          chmod +x flash-linux.sh
+        sudo chown -R $USER:$USER ./efi/
 
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: arch-nabu-installer-plasma
-          path: |
-            bin
-            DBKP
-            efi
-            flash-linux.bat
-            flash-linux.sh
-            images
-            installer
-            META-INF
-          retention-days: 90
-          compression-level: 5
+        '
+    - name: Unmount rootfs image
+      run: 'sudo umount -R ./mountpoint
 
-  trigger-release:
-    if: ${{ inputs.trigger_release == true }}
-    needs:
-      - build-plasma-image
-      - build-gnome-image
-    runs-on: ubuntu-24.04-arm
-    permissions:
-      actions: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - name: Trigger create-release workflow
-        run: |
-          gh workflow run "Create Installer Release" \
-            --repo ${{ github.repository }} \
-            --ref ${{ github.ref_name }} \
-            -f run_id=${{ github.run_id }}
+        rmdir ./mountpoint
+
+        '
+    - name: Prepare artifact directories
+      run: 'e2fsck -f rootfs.img -y
+
+        resize2fs rootfs.img -M
+
+        mkdir -p ./images
+
+        mv ./rootfs.img ./images/
+
+        mv ./repo/bin ./bin
+
+        mv ./repo/DBKP ./DBKP
+
+        mv ./repo/META-INF ./META-INF
+
+        mv ./repo/installer ./installer
+
+        '
+    - name: Download WinPE image
+      run: 'wget "https://github.com/WOAFlasher/WinInstaller/releases/download/WinPE/WinPE23H2.img" -qO ./installer/pe.img
+
+        '
+    - name: Create ESP image
+      run: 'truncate -s 270M ./images/esp.img
+
+        mkfs.fat -F 32 -S 4096 -s 1 -n ESPNABU ./images/esp.img
+
+        mkdir -p ./esp-mount
+
+        sudo mount -o loop ./images/esp.img ./esp-mount/
+
+        sudo mkdir -p ./esp-mount/EFI
+
+        sudo cp -r ./efi/* ./esp-mount/EFI/
+
+        sudo umount ./esp-mount
+
+        rmdir ./esp-mount
+
+        '
+    - name: Copy flash scripts
+      run: 'cp ./repo/base/overlay/opt/nabu/fastboot-script/flash-linux.bat .
+
+        cp ./repo/base/overlay/opt/nabu/fastboot-script/flash-linux.sh .
+
+        chmod +x flash-linux.sh
+
+        '
+    - name: Verify and hash installer payload
+      run: 'set -euo pipefail
+
+        test -s images/rootfs.img
+
+        test -s images/esp.img
+
+        test -s efi/arch/arch-linux-nabu.efi
+
+        e2fsck -fn images/rootfs.img
+
+        cp repo/hyprland/SOURCES.json BUILD-SOURCES.json
+
+        sha256sum images/* > SHA256SUMS
+
+        zip -r -q -6 arch-nabu-installer-hyprland.zip bin DBKP efi images installer META-INF flash-linux.sh flash-linux.bat SHA256SUMS BUILD-SOURCES.json
+
+        unzip -tq arch-nabu-installer-hyprland.zip
+
+        sha256sum arch-nabu-installer-hyprland.zip > arch-nabu-installer-hyprland.zip.sha256
+
+        '
+    - name: Upload installer artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: arch-nabu-installer-hyprland
+        path: 'arch-nabu-installer-hyprland.zip
+
+          arch-nabu-installer-hyprland.zip.sha256'
+        retention-days: 14
+        compression-level: 0
+        if-no-files-found: error
+    timeout-minutes: 180
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
