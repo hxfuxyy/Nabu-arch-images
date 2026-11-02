@@ -12,6 +12,11 @@ ui_print() {
 }
 abort() { ui_print " "; ui_print "$1"; umount -lf "$esp_part" "$win_part" 2>/dev/null; exit 1; }
 
+# detect Magisk app/booted flashing
+BOOTMODE=false;
+ps | grep zygote | grep -v grep >/dev/null && BOOTMODE=true;
+$BOOTMODE || ps -A 2>/dev/null | grep zygote | grep -v grep >/dev/null && BOOTMODE=true;
+
 # Refuse another device before any partition writes.
 device=$(getprop ro.product.device)
 vendor_device=$(getprop ro.product.vendor.device)
@@ -19,11 +24,6 @@ if [ "$device" != nabu ] && [ "$vendor_device" != nabu ]; then
   ui_print "ERROR: Xiaomi Pad 5 (nabu) only; detected $device / $vendor_device"
   exit 1
 fi
-
-# detect Magisk app/booted flashing
-BOOTMODE=false;
-ps | grep zygote | grep -v grep >/dev/null && BOOTMODE=true;
-$BOOTMODE || ps -A 2>/dev/null | grep zygote | grep -v grep >/dev/null && BOOTMODE=true;
 
 # /dev/tmp is safe for both booted and recovery installs
 tmp=/dev/tmp/install;
